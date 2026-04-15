@@ -5,7 +5,6 @@ import (
 	"os"
 
 	"github.com/Subhrato20/track-/cmd"
-	"github.com/Subhrato20/track-/internal/config"
 	"github.com/Subhrato20/track-/internal/db"
 	"github.com/Subhrato20/track-/internal/tracker"
 	"github.com/Subhrato20/track-/internal/tui"
@@ -19,7 +18,7 @@ func main() {
 			cmd.RunUpdate()
 			return
 		case "version":
-			fmt.Println("track- v0.2.0")
+			fmt.Println("track- v0.3.0")
 			return
 		case "setup":
 			cmd.RunSetup()
@@ -27,11 +26,11 @@ func main() {
 		}
 	}
 
-	cfg := config.MustLoad()
 	database := db.MustOpen()
 	defer database.Close()
 
-	client := tracker.NewClient(cfg.APIKey)
+	client := tracker.NewClient()
+	defer client.Close()
 
 	m := tui.NewApp(database, client)
 	p := tea.NewProgram(m, tea.WithAltScreen())

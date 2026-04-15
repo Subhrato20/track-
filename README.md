@@ -1,6 +1,6 @@
 # track-
 
-A beautiful terminal UI for tracking packages on macOS. Supports USPS, FedEx, UPS, DHL, and 1500+ carriers via [Ship24](https://www.ship24.com). Built with Go, [Bubbletea](https://github.com/charmbracelet/bubbletea), and SQLite.
+A beautiful terminal UI for tracking USPS packages on macOS. Scrapes USPS directly — **no API key needed**. Built with Go, [Bubbletea](https://github.com/charmbracelet/bubbletea), and SQLite.
 
 ![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go&logoColor=white)
 ![macOS](https://img.shields.io/badge/macOS-supported-000000?logo=apple&logoColor=white)
@@ -21,13 +21,19 @@ A beautiful terminal UI for tracking packages on macOS. Supports USPS, FedEx, UP
 
 ## Features
 
+- No API key needed — scrapes USPS tracking directly
 - Beautiful colored TUI with status icons
-- Tracks USPS, FedEx, UPS, DHL, and 1500+ carriers (auto-detected)
 - Local SQLite database — your data stays on your machine
 - Add, view, refresh, and delete tracked packages
 - Scrollable tracking history with timestamps and locations
 - Auto-updates all packages daily at 8 AM (via macOS launchd)
 - Works from any terminal — just type `track-`
+
+## Requirements
+
+- **macOS**
+- **Go 1.21+** (for building)
+- **Google Chrome** (used headlessly for scraping — no window opens)
 
 ## Install
 
@@ -63,32 +69,16 @@ bash scripts/install.sh
 
 This installs the binary to `/usr/local/bin/` **and** sets up a launchd agent to auto-refresh your packages daily at 8 AM.
 
-## Setup
-
-### 1. Get a Ship24 API key (free)
-
-1. Go to [ship24.com](https://www.ship24.com) and create an account
-2. Copy your **API key** from the dashboard
-3. Free tier: 10 shipments/month (plenty for personal use)
-
-### 2. Configure track-
-
-```bash
-track- setup
-```
-
-Enter your API key when prompted. That's it.
-
-> Config is stored at `~/.config/track-/config.json`. Database at `~/.config/track-/track.db`.
-
 ## Usage
 
 ```bash
 track-              # Launch the TUI
-track- setup        # Configure API key
+track- setup        # Verify Chrome is installed
 track- update       # Manually refresh all packages (headless)
 track- version      # Print version
 ```
+
+No setup or API keys required. Just install and run.
 
 ### Keyboard shortcuts
 
@@ -105,8 +95,8 @@ track- version      # Print version
 
 ## How it works
 
+- **Scraping**: Uses headless Chrome ([chromedp](https://github.com/chromedp/chromedp)) to visit the USPS tracking page and extract status + events from the DOM
 - **Database**: All tracking data is stored locally in SQLite at `~/.config/track-/track.db`
-- **API**: Uses the [Ship24 API](https://www.ship24.com) to track packages across 1500+ carriers including USPS, FedEx, UPS, and DHL
 - **Auto-update**: The install script sets up a macOS launchd agent that runs `track- update` daily at 8 AM, refreshing all non-delivered packages
 - **No CGO**: Uses pure-Go SQLite (`modernc.org/sqlite`), so `go install` works without a C compiler
 

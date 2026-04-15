@@ -15,6 +15,7 @@ import (
 func RunUpdate() {
 	// Set up logging
 	logPath := filepath.Join(config.ConfigDir(), "update.log")
+	os.MkdirAll(filepath.Dir(logPath), 0755)
 	logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err == nil {
 		log.SetOutput(logFile)
@@ -23,12 +24,6 @@ func RunUpdate() {
 
 	log.Printf("Starting update at %s", time.Now().Format(time.RFC3339))
 
-	cfg, err := config.Load()
-	if err != nil {
-		log.Printf("Error loading config: %v", err)
-		os.Exit(1)
-	}
-
 	database, err := db.Open()
 	if err != nil {
 		log.Printf("Error opening database: %v", err)
@@ -36,7 +31,8 @@ func RunUpdate() {
 	}
 	defer database.Close()
 
-	client := tracker.NewClient(cfg.APIKey)
+	client := tracker.NewClient()
+	defer client.Close()
 
 	packages, err := database.ListPackages()
 	if err != nil {
@@ -84,6 +80,9 @@ func RunUpdate() {
 
 		updated++
 		log.Printf("Updated %s: %s", pkg.TrackingNumber, resp.Status)
+
+		// Small delay between requests to avoid rate limiting
+		time.Sleep(2 * time.Second)
 	}
 
 	log.Printf("Update complete: %d updated, %d skipped (delivered), %d errors", updated, skipped, errors)
