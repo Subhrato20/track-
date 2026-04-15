@@ -91,7 +91,7 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 func (m listModel) View() string {
 	var b strings.Builder
 
-	title := BorderBox.Render(TitleStyle.Render("📦 USPS Package Tracker"))
+	title := BorderBox.Render(TitleStyle.Render("📦 Package Tracker"))
 	b.WriteString(title)
 	b.WriteString("\n\n")
 

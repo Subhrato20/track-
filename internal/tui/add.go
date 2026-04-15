@@ -3,7 +3,6 @@ package tui
 import (
 	"fmt"
 	"strings"
-	"unicode"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -23,7 +22,7 @@ type addModel struct {
 
 func newAddModel() addModel {
 	ti := textinput.New()
-	ti.Placeholder = "9400111899223456789012"
+	ti.Placeholder = "Enter tracking number"
 	ti.Focus()
 	ti.CharLimit = 40
 	ti.Width = 35
@@ -68,14 +67,7 @@ func (m addModel) Validate() error {
 		return fmt.Errorf("tracking number is required")
 	}
 
-	// USPS tracking numbers are typically 20-34 digits
-	digits := 0
-	for _, r := range tn {
-		if unicode.IsDigit(r) {
-			digits++
-		}
-	}
-	if digits < 10 {
+	if len(tn) < 5 {
 		return fmt.Errorf("tracking number seems too short")
 	}
 

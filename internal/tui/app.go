@@ -2,7 +2,7 @@ package tui
 
 import (
 	"github.com/Subhrato20/track-/internal/db"
-	"github.com/Subhrato20/track-/internal/usps"
+	"github.com/Subhrato20/track-/internal/tracker"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -22,20 +22,20 @@ type AppModel struct {
 	add           addModel
 	deleteConfirm deleteModel
 	database      *db.DB
-	uspsClient    *usps.Client
+	client        *tracker.Client
 	width         int
 	height        int
 }
 
-func NewApp(database *db.DB, uspsClient *usps.Client) AppModel {
+func NewApp(database *db.DB, client *tracker.Client) AppModel {
 	return AppModel{
-		currentView: viewList,
-		list:        newListModel(),
-		detail:      newDetailModel(),
-		add:         newAddModel(),
+		currentView:   viewList,
+		list:          newListModel(),
+		detail:        newDetailModel(),
+		add:           newAddModel(),
 		deleteConfirm: newDeleteModel(),
-		database:    database,
-		uspsClient:  uspsClient,
+		database:      database,
+		client:        client,
 	}
 }
 
@@ -223,8 +223,8 @@ func (m AppModel) addPackage(trackingNumber, nickname string) tea.Cmd {
 		}
 
 		// Try to fetch tracking info immediately
-		if m.uspsClient != nil {
-			resp, err := m.uspsClient.GetTracking(trackingNumber)
+		if m.client != nil {
+			resp, err := m.client.GetTracking(trackingNumber)
 			if err == nil {
 				m.database.UpdatePackageStatus(
 					trackingNumber, resp.Status, resp.StatusCategory,
@@ -268,11 +268,11 @@ func (m AppModel) deletePackage(trackingNumber string) tea.Cmd {
 
 func (m AppModel) refreshPackage(trackingNumber string) tea.Cmd {
 	return func() tea.Msg {
-		if m.uspsClient == nil {
+		if m.client == nil {
 			return TrackingErrorMsg{TrackingNumber: trackingNumber, Err: nil}
 		}
 
-		resp, err := m.uspsClient.GetTracking(trackingNumber)
+		resp, err := m.client.GetTracking(trackingNumber)
 		if err != nil {
 			return TrackingErrorMsg{TrackingNumber: trackingNumber, Err: err}
 		}
@@ -318,11 +318,11 @@ func (m AppModel) refreshAll() tea.Cmd {
 				continue
 			}
 
-			if m.uspsClient == nil {
+			if m.client == nil {
 				continue
 			}
 
-			resp, err := m.uspsClient.GetTracking(pkg.TrackingNumber)
+			resp, err := m.client.GetTracking(pkg.TrackingNumber)
 			if err != nil {
 				continue
 			}

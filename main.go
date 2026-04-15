@@ -7,8 +7,8 @@ import (
 	"github.com/Subhrato20/track-/cmd"
 	"github.com/Subhrato20/track-/internal/config"
 	"github.com/Subhrato20/track-/internal/db"
+	"github.com/Subhrato20/track-/internal/tracker"
 	"github.com/Subhrato20/track-/internal/tui"
-	"github.com/Subhrato20/track-/internal/usps"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -19,7 +19,7 @@ func main() {
 			cmd.RunUpdate()
 			return
 		case "version":
-			fmt.Println("track- v0.1.0")
+			fmt.Println("track- v0.2.0")
 			return
 		case "setup":
 			cmd.RunSetup()
@@ -31,7 +31,7 @@ func main() {
 	database := db.MustOpen()
 	defer database.Close()
 
-	client := usps.NewClient(cfg.ClientID, cfg.ClientSecret, cfg.BaseURL)
+	client := tracker.NewClient(cfg.APIKey)
 
 	m := tui.NewApp(database, client)
 	p := tea.NewProgram(m, tea.WithAltScreen())

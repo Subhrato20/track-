@@ -9,7 +9,7 @@ import (
 
 	"github.com/Subhrato20/track-/internal/config"
 	"github.com/Subhrato20/track-/internal/db"
-	"github.com/Subhrato20/track-/internal/usps"
+	"github.com/Subhrato20/track-/internal/tracker"
 )
 
 func RunUpdate() {
@@ -36,7 +36,7 @@ func RunUpdate() {
 	}
 	defer database.Close()
 
-	client := usps.NewClient(cfg.ClientID, cfg.ClientSecret, cfg.BaseURL)
+	client := tracker.NewClient(cfg.APIKey)
 
 	packages, err := database.ListPackages()
 	if err != nil {

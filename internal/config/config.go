@@ -8,9 +8,7 @@ import (
 )
 
 type Config struct {
-	ClientID     string `json:"client_id"`
-	ClientSecret string `json:"client_secret"`
-	BaseURL      string `json:"base_url"`
+	APIKey string `json:"api_key"`
 }
 
 func configDir() string {
@@ -40,12 +38,8 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 
-	if cfg.BaseURL == "" {
-		cfg.BaseURL = "https://apis.usps.com"
-	}
-
-	if cfg.ClientID == "" || cfg.ClientSecret == "" {
-		return nil, fmt.Errorf("client_id and client_secret are required in %s", configPath())
+	if cfg.APIKey == "" {
+		return nil, fmt.Errorf("api_key is required in %s", configPath())
 	}
 
 	return &cfg, nil
@@ -54,10 +48,6 @@ func Load() (*Config, error) {
 func Save(cfg *Config) error {
 	if err := os.MkdirAll(configDir(), 0755); err != nil {
 		return err
-	}
-
-	if cfg.BaseURL == "" {
-		cfg.BaseURL = "https://apis.usps.com"
 	}
 
 	data, err := json.MarshalIndent(cfg, "", "  ")
@@ -73,12 +63,11 @@ func MustLoad() *Config {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %s\n\n", err)
 		fmt.Fprintf(os.Stderr, "To get started:\n")
-		fmt.Fprintf(os.Stderr, "  1. Register at https://developers.usps.com\n")
-		fmt.Fprintf(os.Stderr, "  2. Create an app and get your Consumer Key + Secret\n")
-		fmt.Fprintf(os.Stderr, "  3. Create %s with:\n", configPath())
+		fmt.Fprintf(os.Stderr, "  1. Sign up free at https://www.ship24.com\n")
+		fmt.Fprintf(os.Stderr, "  2. Copy your API key from the dashboard\n")
+		fmt.Fprintf(os.Stderr, "  3. Run 'track- setup' or create %s with:\n", configPath())
 		fmt.Fprintf(os.Stderr, `     {
-       "client_id": "YOUR_CONSUMER_KEY",
-       "client_secret": "YOUR_CONSUMER_SECRET"
+       "api_key": "YOUR_SHIP24_API_KEY"
      }
 `)
 		os.Exit(1)

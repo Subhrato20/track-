@@ -1,6 +1,6 @@
 # track-
 
-A beautiful terminal UI for tracking USPS packages on macOS. Built with Go, [Bubbletea](https://github.com/charmbracelet/bubbletea), and SQLite.
+A beautiful terminal UI for tracking packages on macOS. Supports USPS, FedEx, UPS, DHL, and 1500+ carriers via [Ship24](https://www.ship24.com). Built with Go, [Bubbletea](https://github.com/charmbracelet/bubbletea), and SQLite.
 
 ![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go&logoColor=white)
 ![macOS](https://img.shields.io/badge/macOS-supported-000000?logo=apple&logoColor=white)
@@ -8,7 +8,7 @@ A beautiful terminal UI for tracking USPS packages on macOS. Built with Go, [Bub
 
 ```
 ╭──────────────────────────────────────────────────╮
-│  USPS Package Tracker                            │
+│  Package Tracker                                 │
 ╰──────────────────────────────────────────────────╯
 
   STATUS       TRACKING #              NICKNAME        UPDATED
@@ -22,6 +22,7 @@ A beautiful terminal UI for tracking USPS packages on macOS. Built with Go, [Bub
 ## Features
 
 - Beautiful colored TUI with status icons
+- Tracks USPS, FedEx, UPS, DHL, and 1500+ carriers (auto-detected)
 - Local SQLite database — your data stays on your machine
 - Add, view, refresh, and delete tracked packages
 - Scrollable tracking history with timestamps and locations
@@ -64,12 +65,11 @@ This installs the binary to `/usr/local/bin/` **and** sets up a launchd agent to
 
 ## Setup
 
-### 1. Get USPS API credentials (free)
+### 1. Get a Ship24 API key (free)
 
-1. Go to [developers.usps.com](https://developers.usps.com) and create an account
-2. Click **"Apps"** → **"Create App"**
-3. Select the **Package Tracking** API
-4. After approval, copy your **Consumer Key** and **Consumer Secret**
+1. Go to [ship24.com](https://www.ship24.com) and create an account
+2. Copy your **API key** from the dashboard
+3. Free tier: 10 shipments/month (plenty for personal use)
 
 ### 2. Configure track-
 
@@ -77,7 +77,7 @@ This installs the binary to `/usr/local/bin/` **and** sets up a launchd agent to
 track- setup
 ```
 
-Enter your Consumer Key and Consumer Secret when prompted. That's it.
+Enter your API key when prompted. That's it.
 
 > Config is stored at `~/.config/track-/config.json`. Database at `~/.config/track-/track.db`.
 
@@ -85,7 +85,7 @@ Enter your Consumer Key and Consumer Secret when prompted. That's it.
 
 ```bash
 track-              # Launch the TUI
-track- setup        # Configure USPS API credentials
+track- setup        # Configure API key
 track- update       # Manually refresh all packages (headless)
 track- version      # Print version
 ```
@@ -106,7 +106,7 @@ track- version      # Print version
 ## How it works
 
 - **Database**: All tracking data is stored locally in SQLite at `~/.config/track-/track.db`
-- **API**: Uses the [USPS Package Tracking API v3](https://developers.usps.com) with OAuth 2.0
+- **API**: Uses the [Ship24 API](https://www.ship24.com) to track packages across 1500+ carriers including USPS, FedEx, UPS, and DHL
 - **Auto-update**: The install script sets up a macOS launchd agent that runs `track- update` daily at 8 AM, refreshing all non-delivered packages
 - **No CGO**: Uses pure-Go SQLite (`modernc.org/sqlite`), so `go install` works without a C compiler
 

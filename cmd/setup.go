@@ -16,26 +16,21 @@ func RunSetup() {
 	fmt.Println("│  track- Setup                        │")
 	fmt.Println("╰──────────────────────────────────────╯")
 	fmt.Println()
-	fmt.Println("You need USPS API credentials to use track-.")
-	fmt.Println("Register at https://developers.usps.com to get them.")
+	fmt.Println("You need a Ship24 API key to use track-.")
+	fmt.Println("Sign up free at https://www.ship24.com and copy your API key.")
 	fmt.Println()
 
-	fmt.Print("Consumer Key (client_id): ")
-	clientID, _ := reader.ReadString('\n')
-	clientID = strings.TrimSpace(clientID)
+	fmt.Print("API Key: ")
+	apiKey, _ := reader.ReadString('\n')
+	apiKey = strings.TrimSpace(apiKey)
 
-	fmt.Print("Consumer Secret (client_secret): ")
-	clientSecret, _ := reader.ReadString('\n')
-	clientSecret = strings.TrimSpace(clientSecret)
-
-	if clientID == "" || clientSecret == "" {
-		fmt.Println("\nError: both fields are required.")
+	if apiKey == "" {
+		fmt.Println("\nError: API key is required.")
 		os.Exit(1)
 	}
 
 	cfg := &config.Config{
-		ClientID:     clientID,
-		ClientSecret: clientSecret,
+		APIKey: apiKey,
 	}
 
 	if err := config.Save(cfg); err != nil {
