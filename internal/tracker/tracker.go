@@ -65,6 +65,39 @@ func (c *Client) Close() {
 	}
 }
 
+// DumpPage loads the USPS tracking page and returns the raw HTML + visible text.
+// Used only by the debug command.
+func (c *Client) DumpPage(trackingNumber string) (html, text string, err error) {
+	ctx, cancel := chromedp.NewContext(c.allocCtx)
+	defer cancel()
+	ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	url := "https://tools.usps.com/go/TrackConfirmAction?tLabels=" + trackingNumber
+
+	err = chromedp.Run(ctx,
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			_, e := page.AddScriptToEvaluateOnNewDocument(
+				`Object.defineProperty(navigator, 'webdriver', {get: () => undefined});`,
+			).Do(ctx)
+			return e
+		}),
+		chromedp.Navigate(url),
+	)
+	if err != nil {
+		return "", "", err
+	}
+
+	// Wait a few seconds for JS to render
+	time.Sleep(5 * time.Second)
+
+	err = chromedp.Run(ctx,
+		chromedp.OuterHTML("html", &html),
+		chromedp.Evaluate(`document.body ? document.body.innerText : ''`, &text),
+	)
+	return html, text, err
+}
+
 func (c *Client) GetTracking(trackingNumber string) (*TrackingResponse, error) {
 	ctx, cancel := chromedp.NewContext(c.allocCtx)
 	defer cancel()
@@ -88,16 +121,25 @@ func (c *Client) GetTracking(trackingNumber string) (*TrackingResponse, error) {
 		return nil, fmt.Errorf("navigating to USPS: %w", err)
 	}
 
-	// Step 2: Poll for results (1s intervals, max 30 tries = 30s)
+	// Step 2: Poll for ACTUAL tracking result elements.
+	// .latest-update-banner-wrapper appears when AJAX completes (success OR error state).
+	// .tb-step appears in the new USPS timeline design.
+	// Both indicate the page has finished loading tracking data.
 	var found bool
 	for i := 0; i < 30; i++ {
 		time.Sleep(1 * time.Second)
 		err = chromedp.Run(ctx,
 			chromedp.Evaluate(`
-				!!document.querySelector('.banner-header') ||
-				!!document.querySelector('.tracking_history_container') ||
-				!!document.querySelector('.delivery-status-header') ||
-				!!document.querySelector('.tb-step')
+				(function(){
+					// New USPS timeline design
+					if (document.querySelector('.tb-step')) return true;
+					// Old design: AJAX result banner (success or error)
+					if (document.querySelector('.latest-update-banner-wrapper')) return true;
+					// Old design: tracking history table
+					if (document.querySelector('.tracking_history_container table tr td')) return true;
+					if (document.querySelector('.product_tracking_details table tr td')) return true;
+					return false;
+				})()
 			`, &found),
 		)
 		if err != nil {
@@ -108,65 +150,72 @@ func (c *Client) GetTracking(trackingNumber string) (*TrackingResponse, error) {
 		}
 	}
 
-	// Step 3: Extract all data in one JS call (handles both old and new USPS page designs)
+	// Step 3: Extract tracking data
 	var resultJSON string
 	err = chromedp.Run(ctx,
 		chromedp.Evaluate(`
 			(function() {
 				var result = {status: '', banner: '', delivery: '', events: []};
 
-				// Status — try multiple selector patterns
-				var bh = document.querySelector('.banner-header')
-					|| document.querySelector('.latest-update-banner-wrapper h3')
-					|| document.querySelector('.delivery-status-header h2')
-					|| document.querySelector('.tb-step.current .tb-status-detail')
-					|| document.querySelector('.tb-step .tb-status');
-				result.status = bh ? bh.innerText.trim() : '';
+				// --- New USPS design (.tb-step timeline) ---
+				var steps = document.querySelectorAll('.tb-step');
+				if (steps.length > 0) {
+					var cur = document.querySelector('.tb-step.current')
+						|| document.querySelector('.tb-step[class*="active"]')
+						|| steps[0];
+					var st = cur.querySelector('.tb-status-detail')
+						|| cur.querySelector('.tb-status')
+						|| cur.querySelector('p');
+					result.status = st ? st.innerText.trim() : '';
 
-				// Banner / detail text
-				var bc = document.querySelector('.banner-content')
-					|| document.querySelector('.latest-update-banner-wrapper p')
-					|| document.querySelector('.tb-step.current .tb-date');
-				result.banner = bc ? bc.innerText.trim() : '';
+					var ed = document.querySelector('.expected-delivery-date')
+						|| document.querySelector('[class*="expected"]');
+					result.delivery = ed ? ed.innerText.trim() : '';
 
-				// Expected delivery
-				var ed = document.querySelector('.expected-delivery')
-					|| document.querySelector('.expected-delivery-short-date')
-					|| document.querySelector('[class*="expected"] [class*="date"]')
-					|| document.querySelector('.expected-delivery-date');
-				result.delivery = ed ? ed.innerText.trim() : '';
+					for (var j = 0; j < steps.length; j++) {
+						var s = steps[j];
+						var desc = s.querySelector('.tb-status-detail') || s.querySelector('.tb-status') || s.querySelector('p');
+						var dt   = s.querySelector('.tb-date') || s.querySelector('time') || s.querySelector('[class*="date"]');
+						var loc  = s.querySelector('.tb-location') || s.querySelector('[class*="location"]');
+						if (desc && desc.innerText.trim()) {
+							result.events.push({
+								date:        dt  ? dt.innerText.trim()  : '',
+								description: desc.innerText.trim(),
+								location:    loc ? loc.innerText.trim() : ''
+							});
+						}
+					}
+					return JSON.stringify(result);
+				}
 
-				// Events — table rows (old design)
+				// --- Old USPS design ---
+				// Status comes from .latest-update-banner-wrapper (the AJAX result div)
+				// NOT from the page's marketing .banner-header
+				var wrapper = document.querySelector('.latest-update-banner-wrapper');
+				if (wrapper) {
+					var bh = wrapper.querySelector('.banner-header') || wrapper.querySelector('h3') || wrapper.querySelector('h2');
+					result.status = bh ? bh.innerText.trim() : '';
+					var bc = wrapper.querySelector('.banner-content') || wrapper.querySelector('p');
+					result.banner = bc ? bc.innerText.trim() : '';
+				}
+
+				var ed2 = document.querySelector('.expected-delivery')
+					|| document.querySelector('.expected-delivery-short-date');
+				result.delivery = ed2 ? ed2.innerText.trim() : '';
+
+				// Tracking event rows
 				var rows = document.querySelectorAll('.tracking_history_container table tr');
 				if (rows.length === 0) {
 					rows = document.querySelectorAll('.product_tracking_details table tr');
 				}
-				if (rows.length > 0) {
-					for (var i = 0; i < rows.length; i++) {
-						var cells = rows[i].querySelectorAll('td');
-						if (cells.length >= 2) {
-							result.events.push({
-								date: cells[0].innerText.trim(),
-								description: cells[1].innerText.trim(),
-								location: cells.length >= 3 ? cells[2].innerText.trim() : ''
-							});
-						}
-					}
-				} else {
-					// New USPS design: .tb-step elements
-					var steps = document.querySelectorAll('.tb-step');
-					for (var j = 0; j < steps.length; j++) {
-						var s = steps[j];
-						var desc = s.querySelector('.tb-status-detail') || s.querySelector('.tb-status');
-						var date = s.querySelector('.tb-date') || s.querySelector('time');
-						var loc  = s.querySelector('.tb-location');
-						if (desc) {
-							result.events.push({
-								date: date ? date.innerText.trim() : '',
-								description: desc.innerText.trim(),
-								location: loc ? loc.innerText.trim() : ''
-							});
-						}
+				for (var i = 0; i < rows.length; i++) {
+					var cells = rows[i].querySelectorAll('td');
+					if (cells.length >= 2) {
+						result.events.push({
+							date:        cells[0].innerText.trim(),
+							description: cells[1].innerText.trim(),
+							location:    cells.length >= 3 ? cells[2].innerText.trim() : ''
+						});
 					}
 				}
 
@@ -332,6 +381,11 @@ func normalizeUSPSStatus(status string) string {
 		return "alert"
 	case strings.Contains(lower, "return"):
 		return "returned"
+	case strings.Contains(lower, "not available"),
+		strings.Contains(lower, "label created"),
+		strings.Contains(lower, "pre-shipment"),
+		strings.Contains(lower, "shipping label"):
+		return "pre_transit"
 	default:
 		return "unknown"
 	}

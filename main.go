@@ -23,6 +23,13 @@ func main() {
 		case "setup":
 			cmd.RunSetup()
 			return
+		case "debug":
+			if len(os.Args) < 3 {
+				fmt.Fprintln(os.Stderr, "Usage: track- debug <tracking_number>")
+				os.Exit(1)
+			}
+			cmd.RunDebug(os.Args[2])
+			return
 		}
 	}
 
