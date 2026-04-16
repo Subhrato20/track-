@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 )
 
@@ -45,8 +46,9 @@ func NewClient() *Client {
 		chromedp.Flag("headless", true),
 		chromedp.Flag("disable-gpu", true),
 		chromedp.Flag("no-sandbox", true),
+		chromedp.Flag("disable-blink-features", "AutomationControlled"),
 		chromedp.Flag("disable-dev-shm-usage", true),
-		chromedp.UserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
+		chromedp.UserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"),
 	)
 
 	allocCtx, allocCancel := chromedp.NewExecAllocator(context.Background(), opts...)
@@ -67,83 +69,116 @@ func (c *Client) GetTracking(trackingNumber string) (*TrackingResponse, error) {
 	ctx, cancel := chromedp.NewContext(c.allocCtx)
 	defer cancel()
 
-	ctx, cancel = context.WithTimeout(ctx, 45*time.Second)
+	ctx, cancel = context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
 	url := "https://tools.usps.com/go/TrackConfirmAction?tLabels=" + trackingNumber
 
-	var statusText string
-	var expectedDelivery string
-	var eventsJSON string
-
+	// Step 1: Inject anti-detection script before any page loads (CDP level)
 	err := chromedp.Run(ctx,
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			_, err := page.AddScriptToEvaluateOnNewDocument(
+				`Object.defineProperty(navigator, 'webdriver', {get: () => undefined});`,
+			).Do(ctx)
+			return err
+		}),
 		chromedp.Navigate(url),
-		// Wait for tracking results or error to appear
-		chromedp.WaitVisible(`div.delivery-status-header, div.tb-step, .tracking-progress-bar-status, .banner-header, p.tracking_error, .alert-error, .delivery-status`, chromedp.ByQuery),
-		// Let dynamic content finish rendering
-		chromedp.Sleep(3*time.Second),
-		// Extract status text
-		chromedp.Evaluate(`
-			(function() {
-				var el = document.querySelector('.delivery-status-header h2')
-					|| document.querySelector('.tb-status-detail h2')
-					|| document.querySelector('.banner-header')
-					|| document.querySelector('.tb-status h2')
-					|| document.querySelector('.delivery-status h2')
-					|| document.querySelector('.delivery_status h2');
-				return el ? el.innerText.trim() : '';
-			})()
-		`, &statusText),
-		// Extract expected delivery date
-		chromedp.Evaluate(`
-			(function() {
-				var el = document.querySelector('.expected-delivery-short-date')
-					|| document.querySelector('.expected-delivery')
-					|| document.querySelector('.delivery-date');
-				return el ? el.innerText.trim() : '';
-			})()
-		`, &expectedDelivery),
-		// Extract all tracking events as JSON
-		chromedp.Evaluate(`
-			(function() {
-				var events = [];
-				var rows = document.querySelectorAll('.tb-step');
-				if (rows.length === 0) {
-					rows = document.querySelectorAll('.tb-steps-detail');
-				}
-				if (rows.length === 0) {
-					rows = document.querySelectorAll('.result-col');
-				}
-				for (var i = 0; i < rows.length; i++) {
-					var row = rows[i];
-					var dateEl = row.querySelector('.tb-date') || row.querySelector('.date-col') || row.querySelector('.tb-date-month');
-					var timeEl = row.querySelector('.tb-time') || row.querySelector('.time-col');
-					var descEl = row.querySelector('.tb-status-detail') || row.querySelector('.event-col') || row.querySelector('.tb-status');
-					var locEl = row.querySelector('.tb-location') || row.querySelector('.location-col');
-
-					var dateText = dateEl ? dateEl.innerText.trim() : '';
-					var timeText = timeEl ? timeEl.innerText.trim() : '';
-					var desc = descEl ? descEl.innerText.trim() : '';
-					var loc = locEl ? locEl.innerText.trim() : '';
-
-					if (desc || dateText) {
-						events.push({
-							date: dateText + (timeText ? ' ' + timeText : ''),
-							description: desc,
-							location: loc
-						});
-					}
-				}
-				return JSON.stringify(events);
-			})()
-		`, &eventsJSON),
 	)
-
 	if err != nil {
-		return nil, fmt.Errorf("scraping USPS: %w", err)
+		return nil, fmt.Errorf("navigating to USPS: %w", err)
 	}
 
-	return parseResults(trackingNumber, statusText, expectedDelivery, eventsJSON), nil
+	// Step 2: Poll for results (1s intervals, max 30 tries = 30s)
+	var found bool
+	for i := 0; i < 30; i++ {
+		time.Sleep(1 * time.Second)
+		err = chromedp.Run(ctx,
+			chromedp.Evaluate(`
+				!!document.querySelector('.banner-header') ||
+				!!document.querySelector('.tracking_history_container') ||
+				!!document.querySelector('.delivery-status-header') ||
+				!!document.querySelector('.tb-step')
+			`, &found),
+		)
+		if err != nil {
+			continue
+		}
+		if found {
+			break
+		}
+	}
+
+	// Step 3: Extract all data in one JS call (handles both old and new USPS page designs)
+	var resultJSON string
+	err = chromedp.Run(ctx,
+		chromedp.Evaluate(`
+			(function() {
+				var result = {status: '', banner: '', delivery: '', events: []};
+
+				// Status — try multiple selector patterns
+				var bh = document.querySelector('.banner-header')
+					|| document.querySelector('.latest-update-banner-wrapper h3')
+					|| document.querySelector('.delivery-status-header h2')
+					|| document.querySelector('.tb-step.current .tb-status-detail')
+					|| document.querySelector('.tb-step .tb-status');
+				result.status = bh ? bh.innerText.trim() : '';
+
+				// Banner / detail text
+				var bc = document.querySelector('.banner-content')
+					|| document.querySelector('.latest-update-banner-wrapper p')
+					|| document.querySelector('.tb-step.current .tb-date');
+				result.banner = bc ? bc.innerText.trim() : '';
+
+				// Expected delivery
+				var ed = document.querySelector('.expected-delivery')
+					|| document.querySelector('.expected-delivery-short-date')
+					|| document.querySelector('[class*="expected"] [class*="date"]')
+					|| document.querySelector('.expected-delivery-date');
+				result.delivery = ed ? ed.innerText.trim() : '';
+
+				// Events — table rows (old design)
+				var rows = document.querySelectorAll('.tracking_history_container table tr');
+				if (rows.length === 0) {
+					rows = document.querySelectorAll('.product_tracking_details table tr');
+				}
+				if (rows.length > 0) {
+					for (var i = 0; i < rows.length; i++) {
+						var cells = rows[i].querySelectorAll('td');
+						if (cells.length >= 2) {
+							result.events.push({
+								date: cells[0].innerText.trim(),
+								description: cells[1].innerText.trim(),
+								location: cells.length >= 3 ? cells[2].innerText.trim() : ''
+							});
+						}
+					}
+				} else {
+					// New USPS design: .tb-step elements
+					var steps = document.querySelectorAll('.tb-step');
+					for (var j = 0; j < steps.length; j++) {
+						var s = steps[j];
+						var desc = s.querySelector('.tb-status-detail') || s.querySelector('.tb-status');
+						var date = s.querySelector('.tb-date') || s.querySelector('time');
+						var loc  = s.querySelector('.tb-location');
+						if (desc) {
+							result.events.push({
+								date: date ? date.innerText.trim() : '',
+								description: desc.innerText.trim(),
+								location: loc ? loc.innerText.trim() : ''
+							});
+						}
+					}
+				}
+
+				return JSON.stringify(result);
+			})()
+		`, &resultJSON),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("extracting data: %w", err)
+	}
+
+	return parseResultJSON(trackingNumber, resultJSON), nil
 }
 
 // --- Internal helpers ---
@@ -152,6 +187,61 @@ type rawEvent struct {
 	Date        string `json:"date"`
 	Description string `json:"description"`
 	Location    string `json:"location"`
+}
+
+type scrapeResult struct {
+	Status   string     `json:"status"`
+	Banner   string     `json:"banner"`
+	Delivery string     `json:"delivery"`
+	Events   []rawEvent `json:"events"`
+}
+
+func parseResultJSON(trackingNumber, resultJSON string) *TrackingResponse {
+	result := &TrackingResponse{
+		TrackingNumber: trackingNumber,
+		StatusCategory: "unknown",
+	}
+
+	if resultJSON == "" {
+		return result
+	}
+
+	var sr scrapeResult
+	if err := json.Unmarshal([]byte(resultJSON), &sr); err != nil {
+		return result
+	}
+
+	statusText := sr.Status
+	if statusText == "" {
+		statusText = sr.Banner
+	}
+	result.Status = statusText
+	result.StatusCategory = normalizeUSPSStatus(statusText)
+	result.ExpectedDelivery = sr.Delivery
+
+	result.TrackingEvents = make([]TrackingEvent, 0, len(sr.Events))
+	for _, re := range sr.Events {
+		city, state, zip := parseLocation(re.Location)
+		result.TrackingEvents = append(result.TrackingEvents, TrackingEvent{
+			EventDate:        re.Date,
+			EventDescription: re.Description,
+			City:             city,
+			State:            state,
+			Zip:              zip,
+			Country:          "US",
+		})
+	}
+
+	if len(result.TrackingEvents) > 0 {
+		first := result.TrackingEvents[0]
+		last := result.TrackingEvents[len(result.TrackingEvents)-1]
+		result.DestCity = first.City
+		result.DestState = first.State
+		result.OriginCity = last.City
+		result.OriginState = last.State
+	}
+
+	return result
 }
 
 func parseResults(trackingNumber, statusText, expectedDelivery, eventsJSON string) *TrackingResponse {
@@ -237,7 +327,8 @@ func normalizeUSPSStatus(status string) string {
 	case strings.Contains(lower, "alert"),
 		strings.Contains(lower, "exception"),
 		strings.Contains(lower, "undeliverable"),
-		strings.Contains(lower, "notice left"):
+		strings.Contains(lower, "notice left"),
+		strings.Contains(lower, "not available"):
 		return "alert"
 	case strings.Contains(lower, "return"):
 		return "returned"

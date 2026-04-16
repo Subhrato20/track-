@@ -54,6 +54,35 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.add.width = msg.Width
 		return m, nil
 
+	case PackageAddedMsg:
+		// Add to list immediately, then trigger background refresh
+		m.list, _ = m.list.Update(msg)
+		m.currentView = viewList
+		m.add.loading = false
+		m.list.refreshing = true
+		return m, tea.Batch(m.list.spinner.Tick, m.refreshPackage(msg.Package.TrackingNumber))
+
+	case TrackingUpdatedMsg:
+		// Update the list with refreshed data
+		m.list.refreshing = false
+		m.list, _ = m.list.Update(msg)
+		// If we're viewing this package's detail, update that too
+		if m.currentView == viewDetail && m.detail.pkg.TrackingNumber == msg.TrackingNumber {
+			m.detail.pkg = msg.Package
+			m.detail.SetEvents(msg.Events)
+		}
+		return m, nil
+
+	case TrackingErrorMsg:
+		m.list.refreshing = false
+		m.list.err = msg.Err
+		return m, nil
+
+	case AllRefreshedMsg:
+		m.list.refreshing = false
+		// Reload packages from DB to get updated statuses
+		return m, m.loadPackages()
+
 	case tea.KeyMsg:
 		// Global quit
 		if msg.String() == "ctrl+c" {
@@ -221,40 +250,7 @@ func (m AppModel) addPackage(trackingNumber, nickname string) tea.Cmd {
 		if err != nil {
 			return TrackingErrorMsg{TrackingNumber: trackingNumber, Err: err}
 		}
-
-		// Try to fetch tracking info immediately
-		if m.client != nil {
-			resp, err := m.client.GetTracking(trackingNumber)
-			if err == nil {
-				m.database.UpdatePackageStatus(
-					trackingNumber, resp.Status, resp.StatusCategory,
-					resp.OriginCity, resp.OriginState,
-					resp.DestCity, resp.DestState,
-					resp.ExpectedDelivery,
-				)
-
-				dbEvents := make([]db.TrackingEvent, len(resp.TrackingEvents))
-				for i, e := range resp.TrackingEvents {
-					dbEvents[i] = db.TrackingEvent{
-						TrackingNumber:   trackingNumber,
-						EventDate:        e.EventDate,
-						EventDescription: e.EventDescription,
-						City:             e.City,
-						State:            e.State,
-						Zip:              e.Zip,
-						Country:          e.Country,
-					}
-				}
-				m.database.UpsertEvents(trackingNumber, dbEvents)
-
-				// Re-read the updated package
-				updated, err := m.database.GetPackage(trackingNumber)
-				if err == nil {
-					pkg = updated
-				}
-			}
-		}
-
+		// Return immediately — tracking refresh happens in background
 		return PackageAddedMsg{Package: *pkg}
 	}
 }
